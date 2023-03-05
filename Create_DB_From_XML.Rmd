@@ -1,0 +1,494 @@
+---
+title: "Practicum2_1"
+output: html_notebook
+---
+
+
+```{r}
+library("RSQLite")
+fpath= "C:/Users/ksnss/Desktop/DS5200/"
+dbfile= "Practicum2DB.db"
+```
+
+```{r}
+dbcon <- dbConnect(RSQLite::SQLite(),paste0(fpath,dbfile))
+```
+
+
+
+
+```{sql connection=dbcon}
+PRAGMA foreign_keys = ON
+```
+
+```{r}
+library(XML)
+path = "C:/Users/ksnss/Desktop/DS5200/"
+xml_file = "pubmed_sample.xml"
+fp = paste0(path,xml_file)
+xmlObj <- xmlParse(fp)
+```
+
+
+```{sql connection=dbcon}
+DROP TABLE IF EXISTS Article_Authors
+
+```
+
+```{sql connection=dbcon}
+DROP TABLE IF EXISTS Article
+
+```
+
+
+```{sql connection=dbcon}
+DROP TABLE IF EXISTS Journal_Issue
+
+```
+
+```{sql connection=dbcon}
+DROP TABLE IF EXISTS Journal 
+
+```
+
+
+```{sql connection=dbcon}
+DROP TABLE IF EXISTS Author_Affiliation
+```
+
+
+```{sql connection=dbcon}
+DROP TABLE IF EXISTS Affiliation
+```
+
+
+
+
+```{sql connection=dbcon}
+DROP TABLE IF EXISTS Author
+```
+
+
+
+
+```{sql connection=dbcon}
+DROP TABLE IF EXISTS journal_concat_temp
+```
+
+
+
+
+```{r}
+dbListTables(dbcon)
+```
+
+Creating a normalized relational schema that contains authors, articles and journals
+
+```{sql connection=dbcon}
+CREATE TABLE Author (
+	author_id INTEGER PRIMARY KEY AUTOINCREMENT,
+	first_name TEXT NOT NULL,
+	last_name TEXT NOT NULL,
+	initial TEXT NOT NULL
+);
+```
+
+
+```{sql connection=dbcon}
+CREATE TABLE Affiliation(
+	affiliation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+	affiliation_name TEXT
+);
+
+```
+
+
+
+```{sql connection=dbcon}
+CREATE TABLE Author_Affiliation(
+	auth_id INTEGER,
+	affl_id INTEGER,
+	FOREIGN KEY (auth_id) REFERENCES Author(author_id),
+	FOREIGN KEY (affl_id) REFERENCES Affiliation(affiliation_id)
+);
+```
+
+
+
+```{sql connection=dbcon}
+CREATE TABLE Journal (
+	journal_id INTEGER PRIMARY KEY AUTOINCREMENT,
+	journal_name TEXT NOT NULL,
+	ISSN TEXT
+);
+```
+
+```{sql connection=dbcon}
+CREATE TABLE Journal_Issue (
+	issue_id INTEGER PRIMARY KEY AUTOINCREMENT,
+	jid INTEGER NOT NULL,
+	volume int,
+	issue int,
+	published_date date,
+	pub_month INT,
+	pub_day INT,
+	pub_year INT,
+	
+	FOREIGN KEY (jid) REFERENCES Journal(journal_id)
+);
+```
+
+
+```{sql connection=dbcon}
+CREATE TABLE Article(
+	article_id INTEGER PRIMARY KEY AUTOINCREMENT,
+	title TEXT,
+	j_id INTEGER,
+	issue_id INTEGER,
+	date_created date,
+	month_created INT,
+	year_created INT,
+	FOREIGN KEY (j_id) REFERENCES Journal(journal_id),
+  FOREIGN KEY (issue_id) REFERENCES Journal_Issue(issue_id)
+);
+```
+
+```{sql connection=dbcon}
+CREATE TABLE Article_Authors(
+	art_id INTEGER,
+	auth_art_id INTEGER,
+	FOREIGN KEY (art_id) REFERENCES Article(article_id)
+	FOREIGN KEY (auth_art_id) REFERENCES Author(author_id)
+);
+```
+
+
+```{r}
+dbListTables(dbcon)
+```
+
+Embedding ERD Image:
+
+![alt text](https://imgur.com/a/LvVsilf)
+#![ERD](ERD.png)
+![alt text](ERD.png)
+
+
+
+```{r}
+
+library(knitr)    
+knitr::include_graphics("https://imgur.com/a/R3PGkXD")
+
+
+
+
+```
+
+
+
+```{r}
+#get all affiliations for every author
+afl_table = xpathSApply(xmlObj,"//AuthorList/Author")
+afl_table_df =  xmlToDataFrame(afl_table)
+afl_table_unique = unique(afl_table_df)
+afl_table_unique[order(afl_table_unique$LastName),]
+all_authors_attempt_unique = subset(afl_table_unique, select = -Affiliation)
+all_authors_attempt_unique = unique(all_authors_attempt_unique)
+all_authors_attempt_unique[order(all_authors_attempt_unique$LastName),]
+```
+
+
+
+
+
+Drop tables to make sure they don't exist
+```{sql connection=dbcon}
+DROP TABLE IF EXISTS affil_temp
+```
+
+```{sql connection=dbcon}
+DROP TABLE IF EXISTS authors_temp
+```
+
+write these temporary tables into the database
+```{r}
+dbWriteTable(dbcon, name="affil_temp", value = afl_table_unique )
+```
+
+```{r}
+dbWriteTable(dbcon, name="authors_temp", value = all_authors_attempt_unique )
+```
+
+
+
+
+```{sql connection=dbcon}
+SELECT * FROM authors_temp
+```
+
+#Fill authors table
+```{sql connection=dbcon}
+INSERT INTO Author(first_name, last_name, initial)
+SELECT ForeName, LastName,Initials FROM authors_temp
+
+```
+
+Check authors table
+```{sql connection=dbcon}
+SELECT * FROM Author 
+```
+
+Remove temporary authors table
+```{sql connection=dbcon}
+DROP TABLE IF EXISTS authors_temp
+
+```
+
+#Fill affiliation fact table
+```{sql connection=dbcon}
+INSERT INTO Affiliation(affiliation_name)
+SELECT DISTINCT Affiliation FROM affil_temp
+
+```
+
+Check affiliation table filled
+```{sql connection=dbcon}
+SELECT * FROM Affiliation
+```
+
+Create author affiliation fact table
+```{sql connection=dbcon}
+INSERT INTO Author_Affiliation (auth_id, affl_id)
+SELECT a.author_id, af.affiliation_id
+FROM Author as a, (SELECT Author.author_id, Affiliation.affiliation_id, affil_temp.Affiliation FROM Affiliation, affil_temp, Author WHERE (affil_temp.Affiliation = Affiliation.affiliation_name) AND (Author.last_name = affil_temp.LastName) and (Author.first_name = affil_temp.ForeName) AND (Author.initial = affil_temp.Initials)) as af
+WHERE (af.author_id = a.author_id)
+```
+
+```{sql connection=dbcon}
+SELECT * FROM Author_Affiliation
+```
+
+Remove temporary affiliation table
+```{sql connection=dbcon}
+DROP TABLE IF EXISTS affil_temp
+```
+
+Check fact table is filled
+```{sql connection=dbcon}
+SELECT * FROM Author_Affiliation
+```
+
+Drop affil_temp table
+```{sql connection=dbcon}
+DROP TABLE IF EXISTS affil_temp
+```
+
+## Working with xpath objects
+Get all journal_nodes and convert to a dataframe
+```{r}
+journal_nodes = xpathSApply(xmlObj,"//Journal")
+journal_df = xmlToDataFrame(journal_nodes)
+journal_df[order(journal_df$Title),]
+journal_df[order(journal_df$Title),]
+```
+
+Get all journal issue nodes and convert to a dataframe
+```{r}
+journal_issue_nodes = xpathSApply(xmlObj,"//Journal/JournalIssue")
+journal_issue_df = xmlToDataFrame(journal_issue_nodes)
+```
+
+
+
+```{r}
+journal_issue_pubdate = xpathSApply(xmlObj,"//PubmedData/History/*[@PubStatus='pubmed']")
+journal_issue_pubdate_df = xmlToDataFrame(journal_issue_pubdate)
+journal_issue_pubdate_df["DateFormat"] = paste(journal_issue_pubdate_df$Year, journal_issue_pubdate_df$Month, journal_issue_pubdate_df$Day,sep="-")
+journal_issue_pubdate_df
+```
+
+
+```{r}
+article_titles = xpathSApply(xmlObj,"//ArticleTitle")
+articled_dates = xpathSApply(xmlObj,"//DateCreated")
+article_title_df = xmlToDataFrame(article_titles)
+article_dates_df = xmlToDataFrame(articled_dates)
+article_full_temp = cbind(article_title_df,article_dates_df)
+article_full_temp["a_DateFormatted"] = paste(article_full_temp$Year,
+                                           article_full_temp$Month,
+                                           article_full_temp$Day, sep="-")
+# here we make the format of the date be Year-month-day
+names(article_full_temp)[names(article_full_temp) == "Year"] <- "a_Year"
+names(article_full_temp)[names(article_full_temp) == "Month"] <- "a_Month"
+names(article_full_temp)[names(article_full_temp) == "Day"] <- "a_Day"
+names(article_full_temp)[names(article_full_temp) == "text"] <- "article_title"
+```
+
+concatenate article df, journal df, journal issue df and check if correct
+```{r}
+journal_concat_df = cbind(journal_df,journal_issue_df,journal_issue_pubdate_df,article_full_temp)
+journal_concat_df
+
+```
+
+
+
+
+```{sql connection=dbcon}
+DROP TABLE IF EXISTS journal_concat_temp
+```
+
+```{sql connection=dbcon}
+DROP TABLE IF EXISTS article_author_temp
+```
+
+```{r}
+dbWriteTable(dbcon, name="journal_concat_temp", value = journal_concat_df )
+```
+
+#Fill journal table
+```{sql connection=dbcon}
+INSERT INTO Journal(journal_name, ISSN)
+SELECT DISTINCT Title, ISSN FROM journal_concat_temp
+```
+
+
+
+```{sql connection=dbcon}
+SELECT * FROM Journal
+ORDER BY journal_id
+```
+
+Insert into journal issue table
+```{sql connection=dbcon}
+INSERT INTO Journal_Issue(jid,volume,issue,published_date, pub_month, pub_day, pub_year)
+select J.journal_id,t.volume,t.issue,t.DateFormat,t.Year, t.Month, t.Day
+from Journal as J, journal_concat_temp as t
+where J.journal_name=t.Title
+```
+
+check that the insert was correct
+```{sql connection=dbcon}
+SELECT * FROM Journal_Issue
+```
+
+
+
+```{sql connection=dbcon}
+INSERT INTO Article(title,j_id, issue_id, date_created, month_created,year_created)
+select distinct t.article_title, J.journal_id, t.issue, t.a_DateFormatted, t.a_Month, t.a_Year
+from Journal as J, journal_concat_temp as t
+where J.journal_name =t.Title
+```
+
+```{sql connection=dbcon}
+SELECT * FROM Article
+```
+
+
+
+
+```{sql connection=dbcon}
+DROP TABLE IF EXISTS journal_concat_temp
+```
+
+
+
+```{r}
+dbWriteTable(dbcon, name="journal_concat_temp", value = journal_concat_df )
+```
+
+
+
+
+Check that the journal table was filled correctly
+```{sql connection=dbcon}
+SELECT * FROM Journal
+ORDER BY journal_id
+```
+
+
+
+check that the insert was correct
+```{sql connection=dbcon}
+SELECT * FROM Journal_Issue
+```
+
+
+
+
+
+
+
+
+
+```{sql connection=dbcon}
+SELECT * FROM Article
+```
+```{r}
+
+
+root <- xmlRoot(xmlObj)
+xmlName(root)
+
+n<-xmlSize(root)
+
+
+author_art.df <- data.frame (article_id = integer(),
+author_id = integer(),
+last_name = character(),
+first_name = character(),
+initials = character(),
+stringsAsFactors = FALSE
+)
+
+
+s=1;
+for(m in 1:19)
+{
+node <- root[[m]]
+pubmeddata_node<-node[[1]]
+vals<-"count(./Article/AuthorList/Author)"
+no_of_children_authors<- xpathSApply(pubmeddata_node,vals,xmlChildren)
+lastname<-"./Article/AuthorList/Author/LastName"
+lastname_author<- xpathSApply(pubmeddata_node,lastname,xmlValue)
+forename<-"./Article/AuthorList/Author/ForeName"
+forename_author<- xpathSApply(pubmeddata_node,forename,xmlValue)
+initials<-"./Article/AuthorList/Author/Initials"
+initials_author<- xpathSApply(pubmeddata_node,initials,xmlValue)
+for(i in 1:no_of_children_authors)
+{
+author_art.df[s,1]<-as.integer(m)
+author_art.df[s,2]<-as.integer(s)
+author_art.df[s,3]<-lastname_author[[i]]
+author_art.df[s,4]<-forename_author[[i]]
+author_art.df[s,5]<-initials_author[[i]]
+s<-s+1
+}
+}
+```
+```{r}
+dbWriteTable(dbcon, name="article_author_temp", value = author_art.df )
+```
+```{sql connection=dbcon}
+
+insert into Article_Authors(art_id,auth_art_id)
+select a.article_id,m.author_id from Article a,Author m,article_author_temp t where t.article_id=a.article_id and t.last_name=m.last_name and t.first_name=m.first_name
+
+
+```
+
+```{sql connection=dbcon}
+
+select * from Article_Authors
+
+
+```
+
+
+
+
+
+
+

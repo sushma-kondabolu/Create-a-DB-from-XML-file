@@ -1,0 +1,145 @@
+---
+title: "Practicum2 Part2and3"
+output: html_notebook
+---
+
+Part 2:
+
+Connecting to the database of SQLite created earlier and connecting to MySQL to write fact table.
+
+
+```{r}
+library("RSQLite")
+fpath= "C:/Users/ksnss/Desktop/DS5200/"
+dbfile= "Practicum2DB.db"
+```
+
+
+```{r}
+dbcon <- dbConnect(RSQLite::SQLite(),paste0(fpath,dbfile))
+```
+
+
+
+```{sql connection=dbcon}
+PRAGMA foreign_keys = ON
+```
+
+
+
+
+
+
+
+```{r}
+
+library(RMySQL)     
+
+
+db_user <- 'root'
+db_password <- '100101'
+db_name <- 'practicum2' 
+
+
+db_host <- '127.0.0.1' 
+db_port <- 3306 
+
+
+mydb <-  dbConnect(MySQL(), user = db_user, password = db_password,dbname = db_name, host = db_host, port = db_port)
+```
+
+
+
+
+```{r}
+generate_template <- function(){
+  df_template = data.frame("author_id"=integer(),"author_name"=character(), "num_articles" = integer(), "avg_num_articles" = integer())
+  return(df_template)
+ 
+}
+
+author_data_query="select author_id, first_name||' '||last_name as author_name from Author order by author_id"
+
+author_names_df=dbGetQuery(dbcon,author_data_query)
+
+```
+
+
+
+```{r}
+num_articles_query="select auth_art_id, count(art_id) as 'num_articles' from Article_Authors group by auth_art_id"
+
+num_articles_query_df=dbGetQuery(dbcon,num_articles_query)
+num_articles_query_df
+
+```
+
+```{r}
+min_year_query="select min(Year_published) from df_base_for_fact"
+min_year=dbGetQuery(dbcon,min_year_query)
+min_year
+```
+```{r}
+max_year_query="select max(Year_published) from df_base_for_fact"
+max_year=dbGetQuery(dbcon,max_year_query)
+max_year[1,1]
+```
+```{r}
+no_of_years=max_year[1,1]-min_year[1,1]
+no_of_years
+```
+```{r}
+avg_articles_df=num_articles_query_df
+avg_articles_df$num_articles<-avg_articles_df$num_articles/no_of_years
+avg_articles_df
+```
+```{r}
+final_fact_df<-data.frame(matrix( nrow = nrow(author_names_df),))
+colnames(final_fact_df)=c(author_id=integer(),author_name=character(),num_articles=integer(),avg_no_of_articles=integer())
+
+final_fact_df$author_id<-author_names_df$author_id
+final_fact_df$author_name<-author_names_df$author_name
+final_fact_df$num_articles<-num_articles_query_df$num_articles
+final_fact_df$avg_no_of_articles<-avg_articles_df$num_articles
+
+final_fact_df<-final_fact_df[-c(1)]
+final_fact_df
+```
+
+
+```{r}
+mydb <-  dbConnect(MySQL(), user = db_user, password = db_password,dbname = db_name, host = db_host, port = db_port)
+```
+
+```{sql connection=mydb}
+drop table if exists author_facts;
+
+```
+
+
+
+
+
+Created author fact table
+
+
+
+```{r}
+dbSendQuery(mydb, "SET GLOBAL local_infile = true;")
+dbWriteTable(mydb, name="author_facts", value = final_fact_df) 
+```
+```{sql connection=mydb}
+
+select * from author_facts
+```
+
+
+Part 3:
+```{sql connection=mydb}
+
+select * from author_facts order by num_articles desc limit 0,10;
+```
+
+
+
+
